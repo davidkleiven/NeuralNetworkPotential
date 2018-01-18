@@ -6,7 +6,7 @@ class StructureProvider( object ):
     """
     def __init__( self, db_name ):
         self.db = connect(db_name)
-        self.db_energies = None
+        self.db_energies = []
 
     def get( self, selection="" ):
         """
@@ -25,12 +25,12 @@ class StructureProvider( object ):
         tol - if more than tol digits of the energy of two structures are equal
               they are considered duplicates
         """
-        if ( self.db_energies is None ):
+        if ( len(self.db_energies) == 0 ):
             self.read_db_energies()
 
         num_inserted = 0
         for struct in new_structures:
-            energy = struc.get_potential_energy()
+            energy = struct.get_potential_energy()
             if ( not self.exists_in_db(energy,tol) ):
                 self.db.write( struct )
                 self.db_energies.append(energy)
@@ -45,17 +45,17 @@ class StructureProvider( object ):
         for row in self.db.select():
             db_energy = row.get("energy")
             if ( not db_energy is None ):
-                self.db_energies.append()
+                self.db_energies.append(db_energy)
 
     def exists_in_db( self, energy, n_digits ):
         """
         Check if an entry with this energy already exists in the database
         """
-        if ( self.db_energies is None ):
+        if ( len(self.db_energies) == 0 ):
             self.read_db_energies()
         factor = 10**n_digits
-        for eng in energies:
+        for eng in self.db_energies:
             diff = abs(energy-eng)
             if ( int(diff*factor) == 0 ):
-                return False
-        return True
+                return True
+        return False
