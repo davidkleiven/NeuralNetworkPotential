@@ -210,7 +210,12 @@ class NNPotential(object):
         """
         mic_distance = np.zeros(offsets.shape)
         cell = atoms.get_cell()
+        icell = np.linalg.pinv(cell)
         pos = atoms.get_positions()
+        scaled_pos = pos.dot(icell)
+        scaled_pos %= 1.0
+        # TODO: Fix issues with scaling
+        pos = scaled_pos.dot(cell)
         periodic_shift = offsets.dot(cell)
         r1 = pos[ref_atom,:]
         for i in range(offsets.shape[0]):
@@ -224,10 +229,9 @@ class NNPotential(object):
         print (n_input_nodes)
         grad_inp = np.zeros((3,n_input_nodes))
         indices, offsets = nlist.get_neighbors(indx)
-        #offsets = offsets.dot(atoms.get_cell())
         mic_distance = self.offsets_to_mic_distance( atoms, indx, indices, offsets )
         diff1 = np.sqrt(np.sum(mic_distance[0,:]**2))
-        print (np.sqrt(np.sum(diff1**2)))
+        print (np.sqrt(np.sum(mic_distance**2,axis=1)))
         print (indices)
         print (offsets)
         view(atoms)
