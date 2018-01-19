@@ -1,10 +1,12 @@
+from mpi4py import MPI
 import numpy as np
 from scipy.spatial import cKDTree as KDTree
 from scipy.optimize import minimize
 from itertools import combinations_with_replacement
 import copy
 from ase.neighborlist import NeighborList
-import multiprocessing as mp
+from matplotlib import pyplot as plt
+from ase.visualize import view
 
 class SymmetryFunction(object):
     def __init__( self, sigma, center, uid ):
@@ -17,6 +19,10 @@ class SymmetryFunction(object):
         Gaussian symmetry function
         """
         return np.exp( -((pair_distance-self.center)**2)/(2.0*self.sigma**2) )
+
+    def deriv( self, pair_distance ):
+        eta = 1.0/(2.0*self.sigma**2)
+        return -2.0*eta*(pair_distance-self.center)*self.__call__(pair_distance)
 
 class CutoffFunction(object):
     def __init__( self, Rmin, Rmax ):
@@ -32,6 +38,14 @@ class CutoffFunction(object):
             return 0.0
         else:
             return 0.5*( np.cos(np.pi*(pair_distance-self.Rmin)/(self.Rmax-self.Rmin) ) + 1.0 )
+
+    def deriv( self, pair_distance ):
+        """
+        Compute the gradient of the cutoff function
+        """
+        if ( pair_distance < self.Rmin or pair_distance > self.Rmax ):
+            return 0.0
+        return -0.5*np.pi*np.sin( (np.pi*(pair_distance-self.Rmin)/(self.Rmax-self.Rmin) ) )/( self.Rmax-self.Rmin )
 
 def sigmoid( x ):
     return 1.0/(1.0+np.exp(-x)) - 0.5
@@ -78,6 +92,20 @@ class NNPotential(object):
         # Numpyify the potential
         self.W = np.ones((n_hidden,n_input_nodes))
         self.output_weights = np.ones(n_hidden)
+
+    def maximum_cutoff_radius( self, atoms ):
+        """
+        Returns the maximum cutoff radius to avoid double interaction
+        """
+        cell = atoms.get_cell()
+        v1 = cell[0,:]
+        v2 = cell[1,:]
+        v3 = cell[2,:]
+        v1v2 = v1+v2
+        v1v3 = v1+v3
+        v2v3=v2+v2
+        v1v2v3 = v1+v2+v3
+        return 0.0
 
     def find_pairs( self, atoms ):
         elements = []
@@ -176,42 +204,64 @@ class NNPotential(object):
         neuron_output = sigmoid( self.W.dot(inputs) )
         return self.output_weights.dot(neuron_output)
 
-    def get_force_component( self, atoms, indx, delta ):
+    def offsets_to_mic_distance( self, atoms, ref_atom, indices, offsets ):
+        """
+        Convert the offsets to minimum cell
+        """
+        mic_distance = np.zeros(offsets.shape)
+        cell = atoms.get_cell()
+        pos = atoms.get_positions()
+        periodic_shift = offsets.dot(cell)
+        r1 = pos[ref_atom,:]
+        for i in range(offsets.shape[0]):
+            indx = indices[i]
+            r2 = pos[indx,:]+periodic_shift[i,:]
+            mic_distance[i,:] = r2-r1
+        return mic_distance
+
+    def grad_inputs( self, atoms, indx, nlist ):
+        n_input_nodes = len(self.pairs)*self.n_sym_funcs_per_pair
+        print (n_input_nodes)
+        grad_inp = np.zeros((3,n_input_nodes))
+        indices, offsets = nlist.get_neighbors(indx)
+        #offsets = offsets.dot(atoms.get_cell())
+        mic_distance = self.offsets_to_mic_distance( atoms, indx, indices, offsets )
+        diff1 = np.sqrt(np.sum(mic_distance[0,:]**2))
+        print (np.sqrt(np.sum(diff1**2)))
+        print (indices)
+        print (offsets)
+        view(atoms)
+        exit()
+        for k,i in enumerate(indices):
+            dist = np.sqrt( np.sum(offsets[k]**2) )
+            pair = self.create_pair_key( (atoms[indx].symbol,atoms[i].symbol) )
+            sym_funcs = self.sym_funcs[pair]
+            for sym_func in sym_funcs:
+                grad_inp[:,sym_func.uid] += (self.cutoff_func.deriv(dist)*sym_func(dist) + sym_func.deriv(dist)*self.cutoff_func(dist))*offsets[k,:]/dist
+        return grad_inp
+
+    def get_force( self, atoms, indx, nlist ):
         """
         Compute the force on an atom (by central differences)
         """
-        orig_positions = atoms.get_positions()
-        new_pos = copy.deepcopy(orig_positions)
-        new_pos[indx,:] += 0.5*delta
-        atoms.set_positions(new_pos)
-        energy1 = self.get_potential_energy(atoms,indx)
-        new_pos[indx,:] -= delta
-        atoms.set_positions(new_pos)
-        energy2 = self.get_potential_energy(atoms,indx)
-        atoms.set_positions(orig_positions)
-        step_size = np.sqrt( np.sum(delta**2) )
-        force = (energy1-energy2)/step_size
+        grad_inp = self.grad_inputs(atoms,indx,nlist)
+        inputs = self.get_inputs(atoms,indx,nlist)
+        x = self.W.dot(inputs)
+        force = np.zeros(3)
+        for i in range(3):
+            neuron_output = sigmoid_deriv(x)*self.W.dot(grad_inp[i,:])
+            force[i] = self.output_weights.dot(neuron_output)
         return force
 
-    def get_force_vector( self, atoms, indx, step_size=0.04 ):
-        delta = np.zeros(3)
-        delta[0] = step_size
-        fx = self.get_force_component(atoms,indx,delta)
-        delta[0] = 0.0
-        delta[1] = step_size
-        fy = self.get_force_component(atoms,indx,delta)
-        delta[1] = 0.0
-        delta[2] = step_size
-        fz = self.get_force_component(atoms,indx,delta)
-        return [fx,fy,fz]
-
-    def get_forces( self, atoms, step_size=0.04 ):
+    def get_forces( self, atoms, nlist=None ):
         """
         Compute the forces on all atoms in the structure
         """
         forces = np.zeros((len(atoms),3))
+        if ( nlist is None ):
+            nlist = self.get_neighbor_list(atoms)
         for i in range(len(atoms)):
-            forces[i,:] = self.get_force_vector( atoms,i, step_size )
+            forces[i,:] = self.get_force( atoms, i, nlist )
         return forces
 
     def get_total_energy( self, atoms, nlist=None ):
@@ -238,12 +288,15 @@ class NetworkTrainer( object ):
         if ( self.fit_energy==False and self.fit_forces==False ):
             raise ValueError( "At least one of fit_energy and fit_force has to be True" )
         self.structures = structures
+
         self.network = network
         self.lamb = lamb
         self.force_step_size = force_step_size
         print ("Building neighbor lists")
         self.nlists = [self.network.get_neighbor_list(struct) for struct in self.structures]
         print ("Neigborlists finished")
+        self.comm = None
+        self.rank = 0
 
     def find_reasonable_initial_weights( self ):
         """
@@ -266,10 +319,26 @@ class NetworkTrainer( object ):
         dFx = 0.0
         dFy = 0.0
         dFz = 0.0
-        #print (weights)
+        # Distribute the weights from the master node
+        if ( not self.comm is None ):
+            weights = self.comm.bcast(weights,root=0)
         self.network.set_weights(weights)
         grad_E = np.zeros(len(weights))
-        for i,atoms in enumerate(self.structures):
+
+        indx = range(len(self.structures))
+        if ( not self.comm is None ):
+            self.rank = self.comm.Get_rank()
+            size = self.comm.Get_size()
+            n_per_proc = float( len(self.structures) )/size
+            start = int(n_per_proc*self.rank)
+            end = int(n_per_proc*(self.rank+1))
+
+            if ( self.rank == (size-1) ):
+                indx = indx[start:]
+            else:
+                indx = indx[start:end]
+        for i in indx:
+            atoms = self.structures[i]
             ref_forces = atoms.get_forces()
             ref_energy = atoms.get_potential_energy()
             mean_force = np.mean( np.abs(ref_forces),axis=0 )
@@ -280,16 +349,40 @@ class NetworkTrainer( object ):
                 grad_E += self.grad_cost_func_energy_part_single_structure( tot_energy_nn, ref_energy, i )
                 dE += diff
             if ( self.fit_forces ):
-                forces_nn = self.network.get_forces( atoms, step_size=self.force_step_size )
+                forces_nn = self.network.get_forces( atoms, nlist=self.nlists[i] )
                 dFx += np.mean( (forces_nn[:,0]-ref_forces[:,0])**2 )/mean_force[0]**2
                 dFy += np.mean( (forces_nn[:,1]-ref_forces[:,1])**2 )/mean_force[1]**2
                 dFz += np.mean( (forces_nn[:,2]-ref_forces[:,2])**2 )/mean_force[2]**2
 
+        # Sum contribution from each processor
+        if ( not self.comm is None ):
+            tot_dE = np.zeros(1)
+            tot_grad_E = np.zeros(len(grad_E))
+            dFx_tot = np.zeros(1)
+            dFy_tot = np.zeros(1)
+            dFz_tot = np.zeros(1)
+            self.comm.Allreduce(np.array(dE),tot_dE,op=MPI.SUM )
+            self.comm.Allreduce(grad_E,tot_grad_E,op=MPI.SUM)
+            self.comm.Allreduce(np.array(dFx),dFx_tot,op=MPI.SUM)
+            self.comm.Allreduce(np.array(dFy),dFy_tot,op=MPI.SUM)
+            self.comm.Allreduce(np.array(dFz),dFz_tot,op=MPI.SUM)
+            dE = tot_dE[0]
+            grad_E = tot_grad_E
+            dFx = dFx_tot[0]
+            dFy = dFy_tot[0]
+            dFz = dFz_tot[0]
+
         avg_energy_diff = np.sqrt(dE)/len(self.structures)
+        avg_Fx_diff = np.sqrt(dFx)/len(self.structures)
+        avg_Fy_diff = np.sqrt(dFy)/len(self.structures)
+        avg_Fz_diff = np.sqrt(dFz)/len(structures)
         cost = (dE + (1.0/3.0)*( dFx + dFy + dFz ))/len(self.structures)
         grad = grad_E + 2.0*self.lamb*weights/len(weights)**2
-        print (grad)
-        print ("Energy difference: {}".format(avg_energy_diff))
+
+        if ( self.rank == 0 ):
+            print (grad)
+            print ("Energy difference: {}".format(avg_energy_diff))
+            print ("Average force difference: {}".format([avg_Fx_diff,avg_Fy_diff,avg_Fz_diff]) )
         return cost + self.lamb*self.penalization(), grad
 
     def grad_cost_func_energy_part_single_structure( self, tot_energy_nn, E_ref, struct_indx ):
@@ -303,10 +396,15 @@ class NetworkTrainer( object ):
         weights = np.array( self.network.get_weights() )
         return np.sum(weights**2)/len(weights)**2
 
-    def train( self, method="BFGS", outfile="nnweights.csv", print_msg=True ):
+    def train( self, method="BFGS", outfile="nnweights.csv", print_msg=True, comm=None ):
         """
         Training the network
         """
+        self.comm = comm
+        if ( not self.comm is None ):
+            self.rank = self.comm.Get_rank()
+            if ( self.rank == 0 ):
+                print ("Number of processors {}".format(self.comm.Get_size()))
         options = {
             "disp":print_msg,
             "eps":0.5
@@ -314,5 +412,27 @@ class NetworkTrainer( object ):
         self.find_reasonable_initial_weights()
         x0 = self.network.get_weights()
         res = minimize( self.cost_function, x0, method=method, jac=True, options=options, tol=1E-3 )
-        np.savetxt(outfile, res["x"], delimiter=",")
-        print ( "Neural network weights written to %s"%(outfile) )
+        if ( self.rank == 0 ):
+            np.savetxt(outfile, res["x"], delimiter=",")
+            print ( "Neural network weights written to %s"%(outfile) )
+
+    def plot_energy( self, test_structures=None ):
+        """
+        Generates a plot comparing the DFT energies and the energies from the
+        pair potential
+        """
+        fig = plt.figure()
+        ax = fig.add_subplot(1,1,1)
+        energies_dft = [struct.get_potential_energy()/len(struct) for struct in self.structures]
+        energies_nn = [self.network.get_total_energy(struct, nlist=nlist)/len(struct) for struct,nlist in zip(self.structures,self.nlists)]
+        ax.plot( energies_dft, energies_dft )
+        ax.plot( energies_nn, energies_dft, "o", mfc="none", label="Training data" )
+
+        if ( not test_structures is None ):
+            edft_test = [struct.get_potential_energy()/len(struct) for struct in test_structures]
+            e_nn_test = [self.network.get_total_energy(struct)/len(struct) for struct in test_structures]
+            ax.plot( edft_test, e_nn_test, "o", mfc="none", label="Test data" )
+        ax.set_xlabel( "Energy NN potential (eV/atom)" )
+        ax.set_ylabel( "Energy DFT (eV/atom)" )
+        ax.legend( loc="best", frameon=False )
+        return fig
