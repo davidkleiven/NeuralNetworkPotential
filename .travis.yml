@@ -1,7 +1,7 @@
 language: python
 before_script:
   - sudo apt-get -qq update
-  - sudo apt-get install mpich2
+  - sudo apt-get install libcr-dev mpich2 mpich2-doc
 
 install:
   - pip install -r requirements.txt
