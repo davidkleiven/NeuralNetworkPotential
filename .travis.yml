@@ -7,4 +7,4 @@ install:
 
 script:
   - python setup.py install
-  - python nnpotential/tests/import_all.py
+  - python tests/import_all.py
