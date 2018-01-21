@@ -174,7 +174,7 @@ class NNPotential(object):
         Returns the neighbor list required to evaluate the potential
         """
         cutoffs = [self.Rcut/2.0 for _ in range(len(atoms))]
-        nlist = NeighborList(cutoffs,bothways=True,self_interaction=False)
+        nlist = NeighborList(cutoffs,bothways=True,self_interaction=False,skin=0.0)
         nlist.update(atoms)
         return nlist
 
