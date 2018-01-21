@@ -1,3 +1,3 @@
 # Import everything from the modules
-from nnpotential.structure_provider import *
-from nnpotential.neural_network import *
+from nnpotential import structure_provider
+from nnpotential import neural_network
