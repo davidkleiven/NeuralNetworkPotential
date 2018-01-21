@@ -1,7 +1,7 @@
 language: python
 before_script:
   - sudo apt-get -qq update
-  - sudo apt-get install libopenmpi-dev
+  - sudo apt-get install mpich2
 
 install:
   - pip install -r requirements.txt
