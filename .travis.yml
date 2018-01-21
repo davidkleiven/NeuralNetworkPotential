@@ -2,9 +2,10 @@ language: python
 before_script:
   - sudo apt-get -qq update
   - sudo apt-get install libopenmpi-dev
-env:
-  - C_INCLUDE_PATH=${C_INCLUDE_PATH}:/usr/include/openmpi:/usr/lib/openmpi/include
-  - LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/usr/lib/openmpi:/usr/lib_x86_64
+before_install:
+  - export C_INCLUDE_PATH=${C_INCLUDE_PATH}:/usr/include/openmpi:/usr/lib/openmpi/include
+  - export LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/usr/lib/openmpi:/usr/lib_x86_64
+
 install:
   - pip install -r requirements.txt
 
