@@ -8,3 +8,4 @@ install:
 script:
   - python setup.py install
   - python tests/import_all.py
+  - python -m unittest discover
