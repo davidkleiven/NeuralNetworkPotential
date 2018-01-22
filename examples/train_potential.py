@@ -25,7 +25,7 @@ def main():
             continue
         else:
             filtered_structs.append(structures[indx])
-    trainer = nn.NetworkTrainer( filtered_structs, potential, lamb=0.0, fit_forces=True )
+    trainer = nn.NetworkTrainer( filtered_structs, potential, lamb=0.0, fit_forces=False )
     trainer.train( method="BFGS", outfile="data/nn_almg_weights.csv", comm=comm, tol=1E-3 )
     #evaluate( potential, structures, "data/nn_almg_weights.csv", "data/control_indices.csv" )
 
