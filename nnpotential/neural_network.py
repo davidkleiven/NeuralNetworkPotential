@@ -53,6 +53,9 @@ def sigmoid( x ):
 def sigmoid_deriv( x ):
     return np.exp(-x)/( (1.0+np.exp(-x))**2 )
 
+def sigmoid_double_deriv( x ):
+    return ( np.exp(-2.0*x) - np.exp(-x) )/(1.0+np.exp(-x))**3
+
 class Neuron(object):
     def __init__(self,n_inputs):
         self.weights = np.ones(n_inputs)
@@ -159,6 +162,24 @@ class NNPotential(object):
         grad[current:] = sigmoid(x)
         return grad
 
+    def grad_force_single_atom_wrt_weights( self, inputs, grad_inp ):
+        """
+        Compute the gradient of the forces with respect to the weights
+        """
+        x = self.W.dot(inputs)
+        current = 0
+        grad = np.zeros( (3,self.total_number_of_weights()) )
+        for i in range(self.W.shape[0]):
+            for j in range(3):
+                term1 = sigmoid_double_deriv(x)*inputs*self.W.dot(grad_inp[j,:])
+                term2 = sigmoid_deriv(x)*grad_inp[j,:]
+                grad[j,current:current+self.W.shape[1]] = self.output_weights[i]*( term1 + term2 )
+            current += self.W.shape[1]
+
+        for j in range(3):
+            grad[j,current:] = sigmoid_deriv(x)*self.W.dot(grad_inp[j,:])
+        return grad
+
     def grad_total_energy_wrt_weights( self, atoms, nlist ):
         grad = None
         for i in range(len(atoms)):
@@ -167,6 +188,17 @@ class NNPotential(object):
                 grad = self.grad_energy_single_atom_wrt_weights(inputs)
             else:
                 grad += self.grad_energy_single_atom_wrt_weights(inputs)
+        return grad
+
+    def grad_forces_wrt_weights( self, atoms, nlist ):
+        """
+        Computes the gradient of the forces with respect to the total weight
+        """
+        grad = []
+        for i in range(len(atoms)):
+            inputs = self.get_inputs( atoms, i, nlist )
+            grad_inp = self.grad_inputs( atoms, i, nlist )
+            grad.append( self.grad_force_single_atom_wrt_weights( inputs, grad_inp ) )
         return grad
 
     def get_neighbor_list( self, atoms ):

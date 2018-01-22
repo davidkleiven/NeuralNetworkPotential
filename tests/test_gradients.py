@@ -53,5 +53,36 @@ class TestGradients( unittest.TestCase ):
                 self.assertLess( np.abs( forces_nn[i,j]/force - 1.0), 0.001 )
             atoms.set_positions(orig_pos)
 
+    def test_force_grad_wrt_weights(self):
+        pot = nn.NNPotential( pairs=["Al-Al","Al-Mg","Mg-Mg"], Rcut=4.1, n_sym_funcs_per_pair=10 )
+        atoms = bulk("Al")
+        atoms = atoms*(4,4,4)
+        atoms.rattle()
+        init_weights = np.loadtxt( "tests/nn_almg_weights.csv" )
+        pot.set_weights(init_weights)
+        nlist = pot.get_neighbor_list(atoms)
+        weights = pot.get_weights()
+        delta = 0.0000005
+        grad_f = pot.grad_forces_wrt_weights( atoms, nlist )
+        forces = pot.get_forces( atoms, nlist=nlist )
+        for i in range(len(weights)):
+            weights_cpy = copy.deepcopy(weights)
+            weights_cpy[i] += delta
+            pot.set_weights(weights_cpy)
+            forces_pluss = pot.get_forces( atoms, nlist )
+            num_grad = (forces_pluss-forces)/delta
+
+            # Loop over atoms
+            for j in range(num_grad.shape[0]):
+                exc_grad = grad_f[j]
+                # Loop over components
+                for k in range(num_grad.shape[1]):
+                    #print (exc_grad[k,i], num_grad[j,k])
+                    if ( exc_grad[k,i] == 0.0 or num_grad[j,k] == 0.0 ):
+                        self.assertAlmostEqual( exc_grad[k,i], num_grad[j,k], places=7 )
+                    else:
+                        self.assertLess( np.abs(exc_grad[k,i]/num_grad[j,k]-1.0), 0.001 )
+
+
 if __name__ == "__main__":
     unittest.main()
