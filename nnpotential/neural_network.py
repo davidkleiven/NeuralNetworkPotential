@@ -182,8 +182,10 @@ class NNPotential(object):
         n_input_nodes = len(self.pairs)*self.n_sym_funcs_per_pair
         inputs = np.zeros(n_input_nodes)
         indices, offsets = nlist.get_neighbors(indx)
+        mic_dist = self.offsets_to_mic_distance(atoms,indx,indices,offsets)
+        lenghts = np.sqrt( np.sum(mic_dist**2,axis=1) )
         for k,i in enumerate(indices):
-            dist = np.sqrt( np.sum(offsets[k]**2) )
+            dist = lengths[k]
             pair = self.create_pair_key( (atoms[indx].symbol,atoms[i].symbol) )
             sym_funcs = self.sym_funcs[pair]
             for sym_func in sym_funcs:
@@ -212,10 +214,6 @@ class NNPotential(object):
         cell = atoms.get_cell()
         icell = np.linalg.pinv(cell)
         pos = atoms.get_positions()
-        scaled_pos = pos.dot(icell)
-        scaled_pos %= 1.0
-        # TODO: Fix issues with scaling
-        pos = scaled_pos.dot(cell)
         periodic_shift = offsets.dot(cell)
         r1 = pos[ref_atom,:]
         for i in range(offsets.shape[0]):
