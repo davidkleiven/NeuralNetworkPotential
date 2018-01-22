@@ -167,7 +167,7 @@ class NNPotential(object):
                 grad = self.grad_energy_single_atom_wrt_weights(inputs)
             else:
                 grad += self.grad_energy_single_atom_wrt_weights(inputs)
-        return grad/len(atoms)
+        return grad
 
     def get_neighbor_list( self, atoms ):
         """
@@ -183,7 +183,7 @@ class NNPotential(object):
         inputs = np.zeros(n_input_nodes)
         indices, offsets = nlist.get_neighbors(indx)
         mic_dist = self.offsets_to_mic_distance(atoms,indx,indices,offsets)
-        lenghts = np.sqrt( np.sum(mic_dist**2,axis=1) )
+        lengths = np.sqrt( np.sum(mic_dist**2,axis=1) )
         for k,i in enumerate(indices):
             dist = lengths[k]
             pair = self.create_pair_key( (atoms[indx].symbol,atoms[i].symbol) )
@@ -224,22 +224,16 @@ class NNPotential(object):
 
     def grad_inputs( self, atoms, indx, nlist ):
         n_input_nodes = len(self.pairs)*self.n_sym_funcs_per_pair
-        print (n_input_nodes)
         grad_inp = np.zeros((3,n_input_nodes))
         indices, offsets = nlist.get_neighbors(indx)
         mic_distance = self.offsets_to_mic_distance( atoms, indx, indices, offsets )
         diff1 = np.sqrt(np.sum(mic_distance[0,:]**2))
-        print (np.sqrt(np.sum(mic_distance**2,axis=1)))
-        print (indices)
-        print (offsets)
-        view(atoms)
-        exit()
         for k,i in enumerate(indices):
-            dist = np.sqrt( np.sum(offsets[k]**2) )
+            dist = np.sqrt( np.sum(mic_distance[k,:]**2) )
             pair = self.create_pair_key( (atoms[indx].symbol,atoms[i].symbol) )
             sym_funcs = self.sym_funcs[pair]
             for sym_func in sym_funcs:
-                grad_inp[:,sym_func.uid] += (self.cutoff_func.deriv(dist)*sym_func(dist) + sym_func.deriv(dist)*self.cutoff_func(dist))*offsets[k,:]/dist
+                grad_inp[:,sym_func.uid] += (self.cutoff_func.deriv(dist)*sym_func(dist) + sym_func.deriv(dist)*self.cutoff_func(dist))*mic_distance[k,:]/dist
         return grad_inp
 
     def get_force( self, atoms, indx, nlist ):
@@ -377,12 +371,11 @@ class NetworkTrainer( object ):
         avg_energy_diff = np.sqrt(dE)/len(self.structures)
         avg_Fx_diff = np.sqrt(dFx)/len(self.structures)
         avg_Fy_diff = np.sqrt(dFy)/len(self.structures)
-        avg_Fz_diff = np.sqrt(dFz)/len(structures)
+        avg_Fz_diff = np.sqrt(dFz)/len(self.structures)
         cost = (dE + (1.0/3.0)*( dFx + dFy + dFz ))/len(self.structures)
         grad = grad_E + 2.0*self.lamb*weights/len(weights)**2
 
         if ( self.rank == 0 ):
-            print (grad)
             print ("Energy difference: {}".format(avg_energy_diff))
             print ("Average force difference: {}".format([avg_Fx_diff,avg_Fy_diff,avg_Fz_diff]) )
         return cost + self.lamb*self.penalization(), grad
@@ -398,7 +391,7 @@ class NetworkTrainer( object ):
         weights = np.array( self.network.get_weights() )
         return np.sum(weights**2)/len(weights)**2
 
-    def train( self, method="BFGS", outfile="nnweights.csv", print_msg=True, comm=None ):
+    def train( self, method="BFGS", outfile="nnweights.csv", print_msg=True, comm=None, tol=1E-3 ):
         """
         Training the network
         """
@@ -413,7 +406,7 @@ class NetworkTrainer( object ):
         }
         self.find_reasonable_initial_weights()
         x0 = self.network.get_weights()
-        res = minimize( self.cost_function, x0, method=method, jac=True, options=options, tol=1E-3 )
+        res = minimize( self.cost_function, x0, method=method, jac=True, options=options, tol=tol )
         if ( self.rank == 0 ):
             np.savetxt(outfile, res["x"], delimiter=",")
             print ( "Neural network weights written to %s"%(outfile) )
