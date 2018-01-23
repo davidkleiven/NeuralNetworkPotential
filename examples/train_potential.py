@@ -15,7 +15,7 @@ db_name = "data/almg_structures.db"
 def main( argv ):
     opt = argv[0]
     provider = sp.StructureProvider( db_name )
-    potential = nn.NNPotential( pairs=["Al-Al","Al-Mg","Mg-Mg"], n_sym_funcs_per_pair=20, sym_func_width=1.5, Rcut=4.1, Rmin=1.0,n_hidden=30 )
+    potential = nn.NNPotential( pairs=["Al-Al","Al-Mg","Mg-Mg"], n_sym_funcs_per_pair=20, sym_func_width=1.5, Rcut=4.1, Rmin=1.0,n_hidden=90 )
     structures = provider.get()
 
     # Select 50 random structures to be used as tests

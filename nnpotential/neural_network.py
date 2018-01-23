@@ -426,7 +426,7 @@ class NetworkTrainer( object ):
             print ("Energy difference: {}".format(avg_energy_diff))
             print ("Average force difference: {}".format([avg_Fx_diff,avg_Fy_diff,avg_Fz_diff]) )
             print ("Current cost function: {}".format(cost/len(self.structures)) )
-            grad_norm = np.sqrt( np.sum( (grad/len(self.structures)**2 ) ) )
+            grad_norm = np.sqrt( np.sum( (grad/len(self.structures))**2 ) )
             print ("Norm of gradient: {}".format(grad_norm))
         return cost/len(self.structures) + self.lamb*self.penalization(), grad/len(self.structures)
 
