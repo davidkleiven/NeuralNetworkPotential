@@ -7,7 +7,7 @@ import copy
 from ase.neighborlist import NeighborList
 from matplotlib import pyplot as plt
 from ase.visualize import view
-import datetime
+import time
 
 class SymmetryFunction(object):
     def __init__( self, sigma, center, uid ):
@@ -426,6 +426,8 @@ class NetworkTrainer( object ):
             print ("Energy difference: {}".format(avg_energy_diff))
             print ("Average force difference: {}".format([avg_Fx_diff,avg_Fy_diff,avg_Fz_diff]) )
             print ("Current cost function: {}".format(cost/len(self.structures)) )
+            grad_norm = np.sqrt( np.sum( (grad/len(self.structures)**2 ) ) )
+            print ("Norm of gradient: {}".format(grad_norm))
         return cost/len(self.structures) + self.lamb*self.penalization(), grad/len(self.structures)
 
     def grad_cost_func_energy_part_single_structure( self, tot_energy_nn, E_ref, struct_indx ):
@@ -468,13 +470,14 @@ class NetworkTrainer( object ):
         x0 = self.network.get_weights()
         res = minimize( self.cost_function, x0, method=method, jac=True, options=options, tol=tol )
         if ( self.rank == 0 ):
+            ts = time.strftime("%Y%m%d_%H%M%S")
             splitted = outfile.split(".")
-            fname = splitted[0] + "_{%Y%m%d_%H%M}".format(datetime.datetime.now()) + splitted[1]
+            fname = splitted[0] + "_%s."%(ts) + splitted[1]
             header = "Pairs: {}\n".format(self.network.pairs)
             header += "Number of symmetry functions per pair: {}\n".format(self.network.n_sym_funcs_per_pair)
             header += "Number of hidden layers: {}".format( len(self.network.output_weights) )
             np.savetxt(fname, res["x"], delimiter=",", header=header )
-            print ( "Neural network weights written to %s"%(outfile) )
+            print ( "Neural network weights written to %s"%(fname) )
 
     def plot_energy( self, test_structures=None ):
         """
