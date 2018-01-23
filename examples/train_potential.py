@@ -1,3 +1,4 @@
+import sys
 from nnpotential import neural_network as nn
 from nnpotential import structure_provider as sp
 import numpy as np
@@ -11,9 +12,10 @@ from mpi4py import MPI
 comm = MPI.COMM_WORLD
 
 db_name = "data/almg_structures.db"
-def main():
+def main( argv ):
+    opt = argv[0]
     provider = sp.StructureProvider( db_name )
-    potential = nn.NNPotential( pairs=["Al-Al","Al-Mg","Mg-Mg"], n_sym_funcs_per_pair=10, sym_func_width=1.5, Rcut=4.1, Rmin=1.0,n_hidden=30 )
+    potential = nn.NNPotential( pairs=["Al-Al","Al-Mg","Mg-Mg"], n_sym_funcs_per_pair=20, sym_func_width=1.5, Rcut=4.1, Rmin=1.0,n_hidden=30 )
     structures = provider.get()
 
     # Select 50 random structures to be used as tests
@@ -25,9 +27,12 @@ def main():
             continue
         else:
             filtered_structs.append(structures[indx])
-    trainer = nn.NetworkTrainer( filtered_structs, potential, lamb=0.0, fit_forces=False )
-    trainer.train( method="BFGS", outfile="data/nn_almg_weights.csv", comm=comm, tol=1E-3 )
-    #evaluate( potential, structures, "data/nn_almg_weights.csv", "data/control_indices.csv" )
+
+    if ( opt == "train" ):
+        trainer = nn.NetworkTrainer( filtered_structs, potential, lamb=0.0, fit_forces=True )
+        trainer.train( method="BFGS", outfile="data/nn_almg_weights_with_force.csv", comm=comm, tol=1E-3 )
+    elif ( opt == "eval" ):
+        evaluate( potential, structures, "data/nn_almg_weights_with_force_.csv", "data/control_indices_with_force.csv" )
 
 def evaluate( network, all_structs, weight_file, control_file ):
     control_indices = np.loadtxt( control_file, delimiter=",").astype(np.int32)
@@ -42,8 +47,9 @@ def evaluate( network, all_structs, weight_file, control_file ):
             filtered_structs.append(all_structs[i])
     trainer = nn.NetworkTrainer( filtered_structs, network )
     trainer.plot_energy( test_structures=test_structures )
+    trainer.plot_forces()
     plt.show()
 
 
 if __name__ == "__main__":
-    main()
+    main( sys.argv[1:])
