@@ -8,6 +8,8 @@ from ase.neighborlist import NeighborList
 from matplotlib import pyplot as plt
 from ase.visualize import view
 import time
+import json
+
 class SymmetryFunction(object):
     def __init__( self, sigma, center, uid ):
         self.sigma = sigma
@@ -121,6 +123,8 @@ class NNPotential(object):
         self.Rcut = Rcut
         centers = np.linspace( Rmin, Rcut, n_sym_funcs_per_pair )
         uid = 0
+        self.sym_func_width = sym_func_width
+        self.Rmin = Rmin
         for pair in self.pairs:
             for mu in centers:
                 self.sym_funcs[pair].append( SymmetryFunction(sym_func_width,mu,uid) )
@@ -139,6 +143,22 @@ class NNPotential(object):
         # Numpyify the potential
         self.W = np.ones((n_hidden,n_input_nodes))
         self.output_weights = np.ones(n_hidden)
+
+    def save( self, fname ):
+        """
+        Saves all required parameters to re-create the cluster
+        """
+        data = {}
+        data["pairs"] = self.pairs
+        data["n_sym_funcs_per_pair"] = self.n_sym_funcs_per_pair
+        data["sym_func_width"] = self.sym_func_width
+        data["Rcut"] = self.Rcut
+        data["Rmin"] = self.Rmin
+        data["n_hidden"] = len(self.output_weights)
+        data["weights"] = self.get_weights()
+        with open(fname,'w') as outfile:
+            json.dump(data,outfile)
+        print ("Results written to {}".format(fname))
 
     def maximum_cutoff_radius( self, atoms ):
         """
@@ -315,7 +335,8 @@ class NNPotential(object):
             sym_funcs = self.sym_funcs[pair]
             for sym_func in sym_funcs:
                 symval, symderiv = sym_func.value_and_deriv(dist)
-                grad_inp[:,sym_func.uid] += (cutoff_deriv[k]*symval + symderiv*cutoff_values[k])*mic_distance[k,:]/dist
+                # TODO: Minus or plus here?
+                grad_inp[:,sym_func.uid] -= (cutoff_deriv[k]*symval + symderiv*cutoff_values[k])*mic_distance[k,:]/dist
         return grad_inp
 
     def get_force( self, atoms, indx, nlist ):
@@ -353,6 +374,23 @@ class NNPotential(object):
             tot_energy += self.get_potential_energy( atoms, i, nlist )
         return tot_energy
 
+    def plot_weights( self ):
+        """
+        Plots the weights
+        """
+        fig = plt.figure()
+        ax = fig.add_subplot(1,1,1)
+        start = 0
+        for i in range(self.W.shape[0]):
+            indx = np.arange(start,start+self.W.shape[1])
+            ax.bar( indx, self.W[i,:], label=i )
+            start += self.W.shape[1]+1
+        indx = np.arange(start,start+len(self.output_weights))
+        ax.bar( indx, self.output_weights )
+        ax.legend( loc="best" )
+        ax.set_ylabel( "Weight" )
+        return fig
+
 def get_potential_energy_tuple( args ):
     return args[0].get_potential_energy( args[1], args[2], args[3] )
 
@@ -376,7 +414,7 @@ class NetworkTrainer( object ):
         self.comm = None
         self.rank = 0
 
-    def find_reasonable_initial_weights( self ):
+    def find_reasonable_initial_weights( self, forces=True ):
         """
         Finds initial weights such that the sigmoid functions simply return 0.5
         """
@@ -437,7 +475,6 @@ class NetworkTrainer( object ):
                 dFy += np.sum( (forces_nn[:,1] - ref_forces[:,1])**2 )
                 dFz += np.sum( (forces_nn[:,2] - ref_forces[:,2])**2 )
                 grad_F += self.grad_cost_func_force_part_single_structure( forces_nn, ref_forces, i )
-
         # Sum contribution from each processor
         if ( not self.comm is None ):
             tot_dE = np.zeros(1)
@@ -459,10 +496,10 @@ class NetworkTrainer( object ):
             dFz = dFz_tot[0]
             grad_F = tot_grad_F
 
-        avg_energy_diff = np.sqrt(dE)/len(self.structures)
-        avg_Fx_diff = np.sqrt(dFx)/len(self.structures)
-        avg_Fy_diff = np.sqrt(dFy)/len(self.structures)
-        avg_Fz_diff = np.sqrt(dFz)/len(self.structures)
+        avg_energy_diff = np.sqrt(dE/len(self.structures))
+        avg_Fx_diff = np.sqrt(dFx/len(self.structures))
+        avg_Fy_diff = np.sqrt(dFy/len(self.structures))
+        avg_Fz_diff = np.sqrt(dFz/len(self.structures))
         cost = dE + (1.0/3.0)*( dFx + dFy + dFz )
         grad = grad_E + 2.0*self.lamb*weights/len(weights)**2
 
@@ -470,11 +507,15 @@ class NetworkTrainer( object ):
             grad += (1.0/3.0)*grad_F
 
         if ( self.rank == 0 ):
-            print ("Energy difference: {}".format(avg_energy_diff))
-            print ("Average force difference: {}".format([avg_Fx_diff,avg_Fy_diff,avg_Fz_diff]) )
+            print ("RMSE energy: {}".format(avg_energy_diff))
+            print ("RMSE forces: {}".format([avg_Fx_diff,avg_Fy_diff,avg_Fz_diff]) )
+            rmse_force = np.sqrt( (dFx+dFy+dFz)/(len(self.structures)*64*3) )
+            print ("Proper RMSE forces: {}".format(rmse_force))
             print ("Current cost function: {}".format(cost/len(self.structures)) )
-            grad_norm = np.sqrt( np.sum( (grad/len(self.structures))**2 ) )
-            print ("Norm of gradient: {}".format(grad_norm))
+            grad_norm = np.max(np.abs(grad))/len(self.structures)
+            print ("Inf. norm of gradient: {}".format(grad_norm))
+            ref_forces = self.network.get_forces( self.structures[0], self.nlists[0] )
+            f_dft = self.structures[0].get_forces()
         return cost/len(self.structures) + self.lamb*self.penalization(), grad/len(self.structures)
 
     def grad_cost_func_energy_part_single_structure( self, tot_energy_nn, E_ref, struct_indx ):
@@ -519,12 +560,12 @@ class NetworkTrainer( object ):
         if ( self.rank == 0 ):
             ts = time.strftime("%Y%m%d_%H%M%S")
             splitted = outfile.split(".")
-            fname = splitted[0] + "_%s."%(ts) + splitted[1]
+            fname = splitted[0] + "_%s"%(ts) + ".json"
             header = "Pairs: {}\n".format(self.network.pairs)
             header += "Number of symmetry functions per pair: {}\n".format(self.network.n_sym_funcs_per_pair)
             header += "Number of hidden layers: {}".format( len(self.network.output_weights) )
-            np.savetxt(fname, res["x"], delimiter=",", header=header )
-            print ( "Neural network weights written to %s"%(fname) )
+            np.savetxt(fname, self.network.get_weights(), delimiter=",", header=header )
+            self.network.save( fname )
 
     def plot_energy( self, test_structures=None ):
         """
@@ -537,6 +578,10 @@ class NetworkTrainer( object ):
         energies_nn = [self.network.get_total_energy(struct, nlist=nlist)/len(struct) for struct,nlist in zip(self.structures,self.nlists)]
         ax.plot( energies_dft, energies_dft )
         ax.plot( energies_nn, energies_dft, "o", mfc="none", label="Training data" )
+        energies_nn = np.array(energies_nn)
+        energies_dft = np.array(energies_dft)
+        rmse = np.sqrt( np.sum( (energies_nn-energies_dft)**2 )/len(energies_nn) )
+        print ("RMSE energy: %.2f"%(rmse))
 
         if ( not test_structures is None ):
             edft_test = [struct.get_potential_energy()/len(struct) for struct in test_structures]
@@ -546,7 +591,8 @@ class NetworkTrainer( object ):
         ax.set_ylabel( "Energy DFT (eV/atom)" )
         ax.spines["right"].set_visible(False)
         ax.spines["top"].set_visible(False)
-        ax.legend( loc="best", frameon=False )
+        ax.text( 0.3,0.05, "RMSE: %.2f eV/atom"%(rmse), transform=ax.transAxes )
+        ax.legend( loc="upper left", frameon=False )
         return fig
 
     def plot_forces( self, test_structures=None ):
@@ -564,13 +610,17 @@ class NetworkTrainer( object ):
                 forces_dft[i] += list(f_dft[:,i])
                 forces_nn[i] += list(f_nn[:,i])
 
+        N = len(forces_nn[0])*3
+        rmse = np.sqrt( np.sum( (np.array(forces_nn)-np.array(forces_dft) )**2 )/N )
+        print ("RMSE forces: %.2f eV/A"%(rmse) )
         labels=["x","y","z"]
         ax.plot( forces_dft[0], forces_dft[0] )
         for i in range(3):
             ax.plot( forces_nn[i], forces_dft[i], "o", mfc="none", label=labels[i] )
+        ax.text( 0.3, 0.05, "RMSE: %.2f eV/A"%(rmse), transform=ax.transAxes )
         ax.set_xlabel( "Forces NN (eV/A)" )
         ax.set_ylabel( "Forces DFT (eV/A)" )
         ax.spines["right"].set_visible(False)
         ax.spines["top"].set_visible(False)
-        ax.legend( loc="best", frameon=False )
+        ax.legend( loc="upper left", frameon=False )
         return fig

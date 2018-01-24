@@ -14,8 +14,9 @@ comm = MPI.COMM_WORLD
 db_name = "data/almg_structures.db"
 def main( argv ):
     opt = argv[0]
+    sym_width = float(argv[1])
     provider = sp.StructureProvider( db_name )
-    potential = nn.NNPotential( pairs=["Al-Al","Al-Mg","Mg-Mg"], n_sym_funcs_per_pair=20, sym_func_width=1.5, Rcut=4.1, Rmin=1.0,n_hidden=30 )
+    potential = nn.NNPotential( pairs=["Al-Al","Al-Mg","Mg-Mg"], n_sym_funcs_per_pair=20, sym_func_width=sym_width, Rcut=4.1, Rmin=1.0,n_hidden=30 )
     structures = provider.get()
 
     # Select 50 random structures to be used as tests
@@ -29,15 +30,16 @@ def main( argv ):
             filtered_structs.append(structures[indx])
 
     if ( opt == "train" ):
-        trainer = nn.NetworkTrainer( filtered_structs, potential, lamb=0.0, fit_forces=True )
-        trainer.train( method="BFGS", outfile="data/nn_almg_weights_with_force.csv", comm=comm, tol=1E10 )
+        trainer = nn.NetworkTrainer( filtered_structs, potential, lamb=0.0, fit_forces=True, fit_energy=False )
+        trainer.train( method="BFGS", outfile="data/nn_almg_weights_with_force.csv", comm=comm, tol=1E-4 )
     elif ( opt == "eval" ):
-        evaluate( potential, structures, "data/nn_almg_weights_with_force_20180123_193622.csv", "data/control_indices.csv" )
+        evaluate( potential, structures, "data/nn_almg_weights_with_force_20180124_171211.csv", "data/control_indices.csv" )
 
 def evaluate( network, all_structs, weight_file, control_file ):
     control_indices = np.loadtxt( control_file, delimiter=",").astype(np.int32)
     weights = np.loadtxt( weight_file, delimiter=",")
     network.set_weights(weights)
+    network.plot_weights()
     filtered_structs = []
     test_structures = []
     for i in range(len(all_structs)):
