@@ -170,11 +170,12 @@ class NNPotential(object):
         x = self.W.dot(inputs)
         current = 0
         grad = np.zeros( (3,self.total_number_of_weights()) )
+        wdot_g_inp = self.W.dot(grad_inp.T)
         for i in range(self.W.shape[0]):
             for j in range(3):
-                wdot_g_inp = self.W.dot(grad_inp[j,:])
+                #wdot_g_inp = self.W.dot(grad_inp[j,:])
                 #term1 = sigmoid_double_deriv(x)*inputs*self.W.dot(grad_inp[j,:])
-                term1 = sigmoid_double_deriv(x[i])*inputs*wdot_g_inp[i]
+                term1 = sigmoid_double_deriv(x[i])*inputs*wdot_g_inp[i,j]
                 term2 = sigmoid_deriv(x[i])*grad_inp[j,:]
                 grad[j,current:current+self.W.shape[1]] = self.output_weights[i]*( term1 + term2 )
             current += self.W.shape[1]
