@@ -8,7 +8,6 @@ from ase.neighborlist import NeighborList
 from matplotlib import pyplot as plt
 from ase.visualize import view
 import time
-
 class SymmetryFunction(object):
     def __init__( self, sigma, center, uid ):
         self.sigma = sigma
@@ -19,11 +18,34 @@ class SymmetryFunction(object):
         """
         Gaussian symmetry function
         """
-        return np.exp( -((pair_distance-self.center)**2)/(2.0*self.sigma**2) )
+        xsq = ((pair_distance-self.center)**2)/(2.0*self.sigma**2)
+        return np.e**(-xsq) # 2x times faster than np.exp
+        #return np.exp( -xsq )
 
     def deriv( self, pair_distance ):
         eta = 1.0/(2.0*self.sigma**2)
         return -2.0*eta*(pair_distance-self.center)*self.__call__(pair_distance)
+
+    def value_and_deriv( self, pdist ):
+        val = self.__call__(pdist)
+        eta = 1.0/(2.0*self.sigma**2)
+        return val, -2.0*eta*(pdist-self.center)*val
+
+class SymmetryParabola( SymmetryFunction ):
+    def __init__( self, sigma, center, uid ):
+        SymmetryFunction.__init__(self,sigma,center,uid)
+        self.upper = self.center + np.sqrt(2.0)*self.sigma
+
+    def __call__( self, pdist ):
+        """
+        Parabolic symmetry function
+        """
+        if ( pdist > self.upper ):
+            return 0.0
+        return 1.0 - ((pdist-self.center)**2)/(2.0*self.sigma**2)
+
+    def deriv( self, pdist ):
+        return -(pdist-self.center)/self.sigma**2
 
 class CutoffFunction(object):
     def __init__( self, Rmin, Rmax ):
@@ -47,6 +69,26 @@ class CutoffFunction(object):
         if ( pair_distance < self.Rmin or pair_distance > self.Rmax ):
             return 0.0
         return -0.5*np.pi*np.sin( (np.pi*(pair_distance-self.Rmin)/(self.Rmax-self.Rmin) ) )/( self.Rmax-self.Rmin )
+
+class ParabolicCutoff(CutoffFunction):
+    def __init__( self, Rmin, Rmax ):
+        CutoffFunction.__init__(self,Rmin,Rmax)
+
+    def __call__( self, pdist ):
+        if ( pdist <self.Rmin ):
+            return 1.0
+        elif ( pdist > self.Rmax ):
+            return 0.0
+
+        x = np.pi*(pdist-self.Rmin)/(self.Rmax-self.Rmin)
+        return 1.0 - 0.25*x**2
+
+    def deriv( self, pdist ):
+        if ( pdist < self.Rmin or pdist > self.Rmax ):
+            return 0.0
+
+        x = np.pi*(pdist-self.Rmin)/(self.Rmax-self.Rmin)
+        return -0.5*x*np.pi/(self.Rmax-self.Rmin)
 
 def sigmoid( x ):
     return 1.0/(1.0+np.exp(-x)) - 0.5
@@ -85,6 +127,7 @@ class NNPotential(object):
                 uid += 1
 
         self.cutoff_func = CutoffFunction( 0.9*Rcut, Rcut )
+        #self.cutoff_func = ParabolicCutoff( 0.9*Rcut, Rcut )
 
         n_input_nodes = len(self.pairs)*n_sym_funcs_per_pair
         self.hidden_neurons = []
@@ -263,13 +306,16 @@ class NNPotential(object):
         grad_inp = np.zeros((3,n_input_nodes))
         indices, offsets = nlist.get_neighbors(indx)
         mic_distance = self.offsets_to_mic_distance( atoms, indx, indices, offsets )
-        diff1 = np.sqrt(np.sum(mic_distance[0,:]**2))
+        dists = np.sqrt( np.sum(mic_distance**2,axis=1) )
+        cutoff_values = [self.cutoff_func(dist) for dist in dists]
+        cutoff_deriv = [self.cutoff_func.deriv(dist) for dist in dists]
         for k,i in enumerate(indices):
-            dist = np.sqrt( np.sum(mic_distance[k,:]**2) )
+            dist = dists[k]
             pair = self.create_pair_key( (atoms[indx].symbol,atoms[i].symbol) )
             sym_funcs = self.sym_funcs[pair]
             for sym_func in sym_funcs:
-                grad_inp[:,sym_func.uid] += (self.cutoff_func.deriv(dist)*sym_func(dist) + sym_func.deriv(dist)*self.cutoff_func(dist))*mic_distance[k,:]/dist
+                symval, symderiv = sym_func.value_and_deriv(dist)
+                grad_inp[:,sym_func.uid] += (cutoff_deriv[k]*symval + symderiv*cutoff_values[k])*mic_distance[k,:]/dist
         return grad_inp
 
     def get_force( self, atoms, indx, nlist ):
