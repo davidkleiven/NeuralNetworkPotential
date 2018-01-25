@@ -16,6 +16,11 @@ class SymmetryFunction(object):
         self.center = center
         self.uid = uid
 
+    def __eq__( self, other ):
+        return (self.sigma == other.sigma ) and \
+               (self.center == other.center ) and \
+               (self.uid == other.uid )
+
     def __call__( self, pair_distance ):
         """
         Gaussian symmetry function
@@ -55,6 +60,10 @@ class CutoffFunction(object):
             raise ValueError( "Rmin has to be strictly smaller than Rmax" )
         self.Rmin = Rmin
         self.Rmax = Rmax
+
+    def __eq__( self, other ):
+        return (self.Rmin == other.Rmin ) and \
+            (self.Rmax == other.Rmax)
 
     def __call__( self, pair_distance ):
         if ( pair_distance < self.Rmin ):
@@ -144,6 +153,20 @@ class NNPotential(object):
         self.W = np.ones((n_hidden,n_input_nodes))
         self.output_weights = np.ones(n_hidden)
 
+    def __eq__( self, other ):
+        """
+        Compare two potentials
+        """
+        return (self.pairs == other.pairs ) and \
+               (self.sym_funcs == other.sym_funcs ) and \
+               (self.n_sym_funcs_per_pair == other.n_sym_funcs_per_pair ) and \
+               (self.Rcut == other.Rcut ) and \
+               (self.sym_func_width == other.sym_func_width) and \
+               (self.Rmin == other.Rmin) and \
+               (self.cutoff_func == other.cutoff_func) and \
+               np.array_equal(self.W,other.W ) and \
+               np.array_equal(self.output_weights,other.output_weights)
+
     def save( self, fname ):
         """
         Saves all required parameters to re-create the cluster
@@ -159,6 +182,15 @@ class NNPotential(object):
         with open(fname,'w') as outfile:
             json.dump(data,outfile)
         print ("Results written to {}".format(fname))
+
+    @staticmethod
+    def load(fname):
+        with open(fname,'r') as infile:
+            data = json.load(infile)
+        nn = NNPotential( pairs=data["pairs"], n_sym_funcs_per_pair=data["n_sym_funcs_per_pair"],
+        sym_func_width=data["sym_func_width"], Rcut=data["Rcut"], Rmin=data["Rmin"],n_hidden=data["n_hidden"] )
+        nn.set_weights(data["weights"])
+        return nn
 
     def maximum_cutoff_radius( self, atoms ):
         """

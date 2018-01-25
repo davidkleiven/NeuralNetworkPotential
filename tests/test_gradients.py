@@ -83,6 +83,14 @@ class TestGradients( unittest.TestCase ):
                     else:
                         self.assertLess( np.abs(exc_grad[k,i]/num_grad[j,k]-1.0), 0.001 )
 
+    def test_load_save(self):
+        pot = nn.NNPotential( pairs=["Al-Al","Al-Mg","Mg-Mg"], Rcut=4.1, n_sym_funcs_per_pair=10, Rmin=0.5 )
+        init_weights = np.loadtxt( "tests/nn_almg_weights.csv" )
+        pot.set_weights(init_weights)
+        fname = "test_save.json"
+        pot.save( fname )
+        loaded_pot =nn. NNPotential.load(fname)
+        self.assertTrue( pot==loaded_pot )
 
 if __name__ == "__main__":
     unittest.main()
