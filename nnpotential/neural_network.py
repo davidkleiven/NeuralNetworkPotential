@@ -245,7 +245,7 @@ class NNPotential(object):
 
         for j in range(3):
             grad[j,current:] = sigmoid_deriv(x)*self.W.dot(grad_inp[j,:])
-        return grad
+        return -grad
 
     def grad_total_energy_wrt_weights( self, atoms, nlist ):
         grad = None
@@ -335,7 +335,7 @@ class NNPotential(object):
             sym_funcs = self.sym_funcs[pair]
             for sym_func in sym_funcs:
                 symval, symderiv = sym_func.value_and_deriv(dist)
-                # TODO: Minus or plus here?
+                # TODO: Minus or plus here? Think it is minus due to the definition of mic_distance
                 grad_inp[:,sym_func.uid] -= (cutoff_deriv[k]*symval + symderiv*cutoff_values[k])*mic_distance[k,:]/dist
         return grad_inp
 
@@ -349,7 +349,7 @@ class NNPotential(object):
         force = np.zeros(3)
         for i in range(3):
             neuron_output = sigmoid_deriv(x)*self.W.dot(grad_inp[i,:])
-            force[i] = self.output_weights.dot(neuron_output)
+            force[i] = -self.output_weights.dot(neuron_output)
         return force
 
     def get_forces( self, atoms, nlist=None ):
@@ -413,6 +413,8 @@ class NetworkTrainer( object ):
         print ("Neigborlists finished")
         self.comm = None
         self.rank = 0
+        self.E_weight = 1.0
+        self.F_weight = 1.0
 
     def find_reasonable_initial_weights( self, forces=True ):
         """
@@ -457,12 +459,12 @@ class NetworkTrainer( object ):
         for i in indx:
             atoms = self.structures[i]
             ref_forces = atoms.get_forces()
-            ref_energy = atoms.get_potential_energy()
+            ref_energy = atoms.get_potential_energy()/len(atoms)
             default_out_array = np.ones_like( ref_forces[:,0])
 
             if ( self.fit_energy ):
-                tot_energy_nn = self.network.get_total_energy( atoms, nlist=self.nlists[i] )
-                diff = ( (tot_energy_nn-ref_energy)/ref_energy )**2
+                tot_energy_nn = self.network.get_total_energy( atoms, nlist=self.nlists[i] )/len(atoms)
+                diff = (tot_energy_nn-ref_energy)**2
                 grad_E += self.grad_cost_func_energy_part_single_structure( tot_energy_nn, ref_energy, i )
                 dE += diff
             if ( self.fit_forces ):
@@ -500,27 +502,28 @@ class NetworkTrainer( object ):
         avg_Fx_diff = np.sqrt(dFx/len(self.structures))
         avg_Fy_diff = np.sqrt(dFy/len(self.structures))
         avg_Fz_diff = np.sqrt(dFz/len(self.structures))
-        cost = dE + (1.0/3.0)*( dFx + dFy + dFz )
-        grad = grad_E + 2.0*self.lamb*weights/len(weights)**2
+        cost = self.E_weight*dE + self.F_weight*(1.0/3.0)*( dFx + dFy + dFz )
+        grad = self.E_weight*grad_E + 2.0*self.lamb*weights/len(weights)**2
 
         if ( self.fit_forces ):
-            grad += (1.0/3.0)*grad_F
+            grad += (1.0/3.0)*grad_F*self.F_weight
 
         if ( self.rank == 0 ):
             print ("RMSE energy: {}".format(avg_energy_diff))
-            print ("RMSE forces: {}".format([avg_Fx_diff,avg_Fy_diff,avg_Fz_diff]) )
             rmse_force = np.sqrt( (dFx+dFy+dFz)/(len(self.structures)*64*3) )
-            print ("Proper RMSE forces: {}".format(rmse_force))
+            print ("RMSE forces: {}".format(rmse_force))
             print ("Current cost function: {}".format(cost/len(self.structures)) )
             grad_norm = np.max(np.abs(grad))/len(self.structures)
             print ("Inf. norm of gradient: {}".format(grad_norm))
-            ref_forces = self.network.get_forces( self.structures[0], self.nlists[0] )
-            f_dft = self.structures[0].get_forces()
+            rel_contrib_E = self.E_weight*dE/cost
+            rel_contrib_F = (dFx+dFy+dFz)*self.F_weight/(3.0*cost)
+            rel_contrib_pen = self.lamb*self.penalization()/cost
+            print ("Rel. contribution to cost: Energy: {}, Forces: {}, penalization: {}".format(rel_contrib_E,rel_contrib_F,rel_contrib_pen))
         return cost/len(self.structures) + self.lamb*self.penalization(), grad/len(self.structures)
 
     def grad_cost_func_energy_part_single_structure( self, tot_energy_nn, E_ref, struct_indx ):
-        grad = self.network.grad_total_energy_wrt_weights( self.structures[struct_indx], self.nlists[struct_indx] )/E_ref
-        return 2.0*(tot_energy_nn-E_ref)*grad/E_ref
+        grad = self.network.grad_total_energy_wrt_weights( self.structures[struct_indx], self.nlists[struct_indx] )
+        return 2.0*(tot_energy_nn-E_ref)*grad
 
     def grad_cost_func_force_part_single_structure( self, forces_nn, force_ref, struct_indx ):
         grad = self.network.grad_forces_wrt_weights( self.structures[struct_indx], self.nlists[struct_indx] )
@@ -541,10 +544,17 @@ class NetworkTrainer( object ):
         weights = np.array( self.network.get_weights() )
         return np.sum(weights**2)/len(weights)**2
 
-    def train( self, method="BFGS", outfile="nnweights.csv", print_msg=True, comm=None, tol=1E-3 ):
+    def train( self, method="BFGS", outfile="nnweights.csv", print_msg=True, comm=None, tol=1E-3, energy_weight=1.0, force_weight=1.0 ):
         """
         Training the network
         """
+        self.E_weight = energy_weight
+        self.F_weight = force_weight
+        if ( self.E_weight <= 0.0 ):
+            self.fit_energy = False
+        if ( self.F_weight <= 0.0 ):
+            self.fit_forces = False
+
         self.comm = comm
         if ( not self.comm is None ):
             self.rank = self.comm.Get_rank()
@@ -623,4 +633,13 @@ class NetworkTrainer( object ):
         ax.spines["right"].set_visible(False)
         ax.spines["top"].set_visible(False)
         ax.legend( loc="upper left", frameon=False )
-        return fig
+
+        fig_dist = plt.figure()
+        axdist = fig_dist.add_subplot(1,1,1)
+        all_data = forces_dft[0]+forces_dft[1]+forces_dft[2]
+        axdist.histogram( all_data, bins=50 )
+        axdist.set_xlabel( "Force (eV/A)" )
+        axdist.set_ylabel( "Number of data points" )
+        axdist.spines["right"].set_visible(False)
+        ax.spines["top"].set_visible(False)
+        return [fig,fig_dist]

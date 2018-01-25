@@ -3,3 +3,6 @@ data/*
 *.pyc
 tests/nnweights*.csv
 nnweights*.csv
+*.sh
+*.json
+*.txt

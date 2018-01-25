@@ -49,7 +49,7 @@ class TestGradients( unittest.TestCase ):
                 atoms.set_positions(pos_cpy)
                 nlist = pot.get_neighbor_list(atoms)
                 Eminus = pot.get_potential_energy( atoms, i, nlist )
-                force = (Epluss-Eminus)/delta
+                force = -(Epluss-Eminus)/delta # Force = negative gradient of the energy
                 self.assertLess( np.abs( forces_nn[i,j]/force - 1.0), 0.001 )
             atoms.set_positions(orig_pos)
 
