@@ -31,7 +31,7 @@ def main( argv ):
 
     if ( opt == "train" ):
         trainer = nn.NetworkTrainer( filtered_structs, potential, lamb=0.0, fit_forces=True, fit_energy=True )
-        trainer.train( method="BFGS", outfile="data/nn_almg_weights_with_force.csv", comm=comm, tol=1E-3, energy_weight=0.02, force_weight=1.0 )
+        trainer.train( method="BFGS", outfile="data/nn_almg_weights_with_force.csv", comm=comm, tol=1E-3, energy_weight=0.01, force_weight=1.0 )
     elif ( opt == "eval" ):
         evaluate( potential, structures, "data/nn_almg_weights_with_force_20180124_171211.csv", "data/control_indices.csv" )
 

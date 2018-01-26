@@ -551,6 +551,7 @@ class NetworkTrainer( object ):
             rel_contrib_F = (dFx+dFy+dFz)*self.F_weight/(3.0*cost)
             rel_contrib_pen = self.lamb*self.penalization()/cost
             print ("Rel. contribution to cost: Energy: {}, Forces: {}, penalization: {}".format(rel_contrib_E,rel_contrib_F,rel_contrib_pen))
+            self.network.save( "data/network_both.json" )
         return cost/len(self.structures) + self.lamb*self.penalization(), grad/len(self.structures)
 
     def grad_cost_func_energy_part_single_structure( self, tot_energy_nn, E_ref, struct_indx ):
@@ -603,10 +604,6 @@ class NetworkTrainer( object ):
             ts = time.strftime("%Y%m%d_%H%M%S")
             splitted = outfile.split(".")
             fname = splitted[0] + "_%s"%(ts) + ".json"
-            header = "Pairs: {}\n".format(self.network.pairs)
-            header += "Number of symmetry functions per pair: {}\n".format(self.network.n_sym_funcs_per_pair)
-            header += "Number of hidden layers: {}".format( len(self.network.output_weights) )
-            np.savetxt(fname, self.network.get_weights(), delimiter=",", header=header )
             self.network.save( fname )
 
     def plot_energy( self, test_structures=None ):
