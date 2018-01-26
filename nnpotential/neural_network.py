@@ -551,7 +551,6 @@ class NetworkTrainer( object ):
             rel_contrib_F = (dFx+dFy+dFz)*self.F_weight/(3.0*cost)
             rel_contrib_pen = self.lamb*self.penalization()/cost
             print ("Rel. contribution to cost: Energy: {}, Forces: {}, penalization: {}".format(rel_contrib_E,rel_contrib_F,rel_contrib_pen))
-            self.network.save( "data/network_both.json" )
         return cost/len(self.structures) + self.lamb*self.penalization(), grad/len(self.structures)
 
     def grad_cost_func_energy_part_single_structure( self, tot_energy_nn, E_ref, struct_indx ):

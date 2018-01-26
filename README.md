@@ -1,3 +1,4 @@
+[![Build status](https://travis-ci.org/davidkleiven/NeuralNetworkPotential.svg?branch=master)]
 # NeuralNetworkPotential
 Neural Network Pair Potential
 
